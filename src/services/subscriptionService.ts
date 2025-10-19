@@ -321,3 +321,30 @@ export function getStatusText(status: string): string {
   
   return texts[status] || status;
 }
+
+/**
+ * Create Stripe Customer Portal session for subscription management
+ * @returns Portal URL to redirect user to
+ */
+export async function createCustomerPortalSession(): Promise<string> {
+  const token = await getAuthToken();
+  if (!token) {
+    throw new Error('Authentication required');
+  }
+
+  const response = await fetch(`${API_BASE_URL}/api/v1/subscription/manage`, {
+    method: 'POST',
+    headers: {
+      'Authorization': `Bearer ${token}`,
+      'Content-Type': 'application/json',
+    },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.detail || 'Failed to create portal session');
+  }
+
+  const data = await response.json();
+  return data.portal_url;
+}

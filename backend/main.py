@@ -76,7 +76,8 @@ from stripe_service import (
     cancel_subscription,
     reactivate_subscription,
     create_checkout_session,
-    create_public_payment_link
+    create_public_payment_link,
+    create_customer_portal_session
 )
 
 # Configure logging
@@ -1499,6 +1500,46 @@ async def reactivate_user_subscription(
         raise
     except Exception as e:
         logger.error(f"❌ Failed to reactivate subscription: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/v1/subscription/manage")
+async def create_portal_session(
+    current_user: UserProfile = Depends(require_auth)
+):
+    """Create a Stripe Customer Portal session for subscription management"""
+    try:
+        # Get user's Stripe customer ID
+        client = get_supabase()
+        user_response = client.table("profiles").select(
+            "stripe_customer_id").eq("id", current_user.id).execute()
+
+        if not user_response.data or not user_response.data[0].get("stripe_customer_id"):
+            raise HTTPException(
+                status_code=404,
+                detail="No Stripe customer found. Please subscribe first."
+            )
+
+        customer_id = user_response.data[0]["stripe_customer_id"]
+
+        # Get return URL from settings or use default
+        return_url = f"{settings.cors_origins[0]}/" if settings.cors_origins else "/"
+
+        # Create portal session
+        portal_session = await create_customer_portal_session(
+            customer_id=customer_id,
+            return_url=return_url
+        )
+
+        return {
+            "success": True,
+            "portal_url": portal_session["url"]
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to create portal session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
