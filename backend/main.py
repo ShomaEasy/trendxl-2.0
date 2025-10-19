@@ -935,10 +935,10 @@ async def require_subscription(
             f"🔑 Admin user {current_user.username} bypassing subscription requirement")
         return current_user
 
-    has_active = await check_active_subscription(current_user.id)
+    has_active = check_active_subscription(current_user.id)
 
     if not has_active:
-        subscription_info = await get_user_subscription_info(current_user.id)
+        subscription_info = get_user_subscription_info(current_user.id)
         status = subscription_info.get(
             "stripe_subscription_status") if subscription_info else None
 
@@ -1253,7 +1253,7 @@ async def get_free_trial_status(
             }
 
         # Check if user has subscription
-        has_subscription = await check_active_subscription(current_user.id)
+        has_subscription = check_active_subscription(current_user.id)
 
         if has_subscription:
             return {
@@ -1307,7 +1307,7 @@ async def get_subscription_info(
     """Get current user's subscription information"""
     try:
         # Get subscription info from database
-        db_subscription = await get_user_subscription_info(current_user.id)
+        db_subscription = get_user_subscription_info(current_user.id)
 
         if not db_subscription or not db_subscription.get("stripe_subscription_id"):
             return {
@@ -1337,7 +1337,7 @@ async def create_subscription_checkout(
     """Create a Stripe Checkout session for subscription"""
     try:
         # Get user's Stripe customer ID
-        db_subscription = await get_user_subscription_info(current_user.id)
+        db_subscription = get_user_subscription_info(current_user.id)
 
         if not db_subscription or not db_subscription.get("stripe_customer_id"):
             raise HTTPException(
@@ -1406,9 +1406,13 @@ async def check_subscription_status(
 ):
     """Check if current user has an active subscription"""
     try:
-        has_active = await check_active_subscription(current_user.id)
+        logger.info(f"🔍 Checking subscription for user: {current_user.id}")
 
-        subscription_info = await get_user_subscription_info(current_user.id)
+        has_active = check_active_subscription(current_user.id)
+        logger.info(f"  has_active_subscription: {has_active}")
+
+        subscription_info = get_user_subscription_info(current_user.id)
+        logger.info(f"  subscription_info: {subscription_info}")
 
         return {
             "has_active_subscription": has_active,
@@ -1417,8 +1421,10 @@ async def check_subscription_status(
         }
 
     except Exception as e:
-        logger.error(f"❌ Failed to check subscription: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Failed to check subscription for user {current_user.id}: {e}")
+        import traceback
+        logger.error(f"  Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to check subscription: {str(e)}")
 
 
 @app.post("/api/v1/subscription/cancel")
@@ -1429,7 +1435,7 @@ async def cancel_user_subscription(
     """Cancel user's subscription"""
     try:
         # Get user's subscription ID
-        db_subscription = await get_user_subscription_info(current_user.id)
+        db_subscription = get_user_subscription_info(current_user.id)
 
         if not db_subscription or not db_subscription.get("stripe_subscription_id"):
             raise HTTPException(
@@ -1470,7 +1476,7 @@ async def reactivate_user_subscription(
     """Reactivate a subscription that was set to cancel"""
     try:
         # Get user's subscription ID
-        db_subscription = await get_user_subscription_info(current_user.id)
+        db_subscription = get_user_subscription_info(current_user.id)
 
         if not db_subscription or not db_subscription.get("stripe_subscription_id"):
             raise HTTPException(

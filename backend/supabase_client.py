@@ -423,7 +423,7 @@ async def update_user_subscription(
         raise
 
 
-async def get_user_subscription_info(user_id: str) -> Optional[dict]:
+def get_user_subscription_info(user_id: str) -> Optional[dict]:
     """Get user's subscription information from profile"""
     try:
         client = get_supabase()
@@ -437,7 +437,7 @@ async def get_user_subscription_info(user_id: str) -> Optional[dict]:
         return None
 
 
-async def check_active_subscription(user_id: str) -> bool:
+def check_active_subscription(user_id: str) -> bool:
     """
     Check if user has an active subscription
 
@@ -448,7 +448,7 @@ async def check_active_subscription(user_id: str) -> bool:
         True if user has active subscription, False otherwise
     """
     try:
-        subscription_info = await get_user_subscription_info(user_id)
+        subscription_info = get_user_subscription_info(user_id)
 
         if not subscription_info:
             return False

@@ -8,7 +8,11 @@
       "Bash(FILTER_BRANCH_SQUELCH_WARNING=1 git filter-branch --force --index-filter \"git rm --cached --ignore-unmatch backend/.env.test\" --prune-empty --tag-name-filter cat -- --all)",
       "Bash(git update-index:*)",
       "Bash(pkill:*)",
-      "Bash(python:*)"
+      "Bash(python:*)",
+      "Bash(git config user.name)",
+      "Bash(git config user.email)",
+      "Bash(cat /home/coder/projects/trendxl-2.0/.gitignore)",
+      "Bash(vercel --version)"
     ],
     "deny": [],
     "ask": []
