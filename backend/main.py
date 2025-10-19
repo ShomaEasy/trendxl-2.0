@@ -1316,12 +1316,29 @@ async def get_subscription_info(
             }
 
         # Get latest subscription details from Stripe
-        subscription = await get_subscription(db_subscription["stripe_subscription_id"])
-
-        return {
-            "has_subscription": True,
-            "subscription": subscription
-        }
+        try:
+            subscription = await get_subscription(db_subscription["stripe_subscription_id"])
+            return {
+                "has_subscription": True,
+                "subscription": subscription
+            }
+        except ValueError as stripe_error:
+            # Stripe not configured - return database info only
+            logger.warning(f"⚠️ Stripe not configured, returning DB info only: {stripe_error}")
+            return {
+                "has_subscription": bool(db_subscription.get("stripe_subscription_status") == "active"),
+                "subscription": {
+                    "subscription_id": db_subscription.get("stripe_subscription_id"),
+                    "status": db_subscription.get("stripe_subscription_status"),
+                    "current_period_start": None,
+                    "current_period_end": db_subscription.get("subscription_end_date"),
+                    "cancel_at_period_end": False,
+                    "canceled_at": None,
+                    "plan_amount": 4900,  # $49/month default
+                    "plan_currency": "usd",
+                    "plan_interval": "month"
+                }
+            }
 
     except Exception as e:
         logger.error(f"❌ Failed to get subscription info: {e}")
