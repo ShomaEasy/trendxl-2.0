@@ -36,6 +36,10 @@
     {
       "source": "/test_import",
       "destination": "/api/test_import.py"
+    },
+    {
+      "source": "/(.*)",
+      "destination": "/index.html"
     }
   ],
   "functions": {
