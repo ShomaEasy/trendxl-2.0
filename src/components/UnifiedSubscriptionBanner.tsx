@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from 'react';
 import { Box, Text, Button, HStack, VStack, Icon, Badge } from '@chakra-ui/react';
-import { AlertCircle, CreditCard, Check, Gift, Clock, Sparkles } from 'lucide-react';
+import { AlertCircle, CreditCard, Check, Gift, Clock, Sparkles, Settings } from 'lucide-react';
 import {
   checkSubscriptionStatus,
   createPublicPaymentLink,
   getFreeTrialInfo,
+  createCustomerPortalSession,
   type SubscriptionStatus,
   type FreeTrialInfo,
 } from '@/services/subscriptionService';
@@ -91,7 +92,7 @@ export function UnifiedSubscriptionBanner({ refreshTrigger }: UnifiedSubscriptio
   const handleSubscribe = async () => {
     try {
       setCreatingPayment(true);
-      
+
       const successUrl = `${window.location.origin}/subscription/success`;
       const cancelUrl = window.location.origin;
 
@@ -105,6 +106,19 @@ export function UnifiedSubscriptionBanner({ refreshTrigger }: UnifiedSubscriptio
     } catch (error) {
       console.error('Failed to create payment link:', error);
       alert('Failed to create payment link. Please try again.');
+    } finally {
+      setCreatingPayment(false);
+    }
+  };
+
+  const handleManageSubscription = async () => {
+    try {
+      setCreatingPayment(true);
+      const portalUrl = await createCustomerPortalSession();
+      window.location.href = portalUrl;
+    } catch (error) {
+      console.error('Failed to open customer portal:', error);
+      alert('Failed to open subscription management. Please try again.');
     } finally {
       setCreatingPayment(false);
     }
@@ -127,11 +141,29 @@ export function UnifiedSubscriptionBanner({ refreshTrigger }: UnifiedSubscriptio
         mb={4}
         className="animate-fade-in"
       >
-        <HStack gap={3} justify="center">
-          <Icon as={Check} color="green.500" boxSize={5} />
-          <Text fontWeight="bold" color="green.700" fontSize="sm">
-            ✨ Premium Active - Unlimited Scans
-          </Text>
+        <HStack gap={4} justify="space-between" align="center" flexWrap="wrap">
+          {/* Left side: Status */}
+          <HStack gap={3} flex={1}>
+            <Icon as={Check} color="green.500" boxSize={5} />
+            <Text fontWeight="bold" color="green.700" fontSize="sm">
+              ✨ Premium Active - Unlimited Scans
+            </Text>
+          </HStack>
+
+          {/* Right side: Manage button */}
+          <Button
+            onClick={handleManageSubscription}
+            isLoading={creatingPayment}
+            colorScheme="green"
+            variant="outline"
+            size="sm"
+            flexShrink={0}
+          >
+            <HStack gap={2}>
+              <Icon as={Settings} boxSize={4} />
+              <span>Manage Subscription</span>
+            </HStack>
+          </Button>
         </HStack>
       </Box>
     );
