@@ -16,6 +16,7 @@ import {
 import { toaster } from './ui/toaster';
 import { CreditCard, CheckCircle, XCircle, Calendar, DollarSign } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
+import { UnifiedSubscriptionBanner } from './UnifiedSubscriptionBanner';
 import {
   getSubscriptionInfo,
   createCheckoutSession,
@@ -316,54 +317,7 @@ const MyProfile: React.FC = () => {
                 </HStack>
               </VStack>
             ) : (
-              <VStack gap={6} align="stretch">
-                <Box 
-                  bg="blue.50" 
-                  borderLeft="4px solid"
-                  borderColor="blue.500"
-                  p={4}
-                  borderRadius="md"
-                >
-                  <Heading size="sm" mb={2} color="blue.800">No Active Subscription</Heading>
-                  <Text fontSize="sm" color="blue.700">
-                    Subscribe to TrendXL Pro for $49/month to unlock unlimited trend analysis.
-                  </Text>
-                </Box>
-
-                <Box bg="gray.800" p={6} borderRadius="lg">
-                  <VStack gap={4} align="start">
-                    <Heading size="sm" color="white">TrendXL Pro - $49/month</Heading>
-                    <VStack gap={2} align="start">
-                      <HStack>
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                        <Text fontSize="sm" color="white">Unlimited trend analysis</Text>
-                      </HStack>
-                      <HStack>
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                        <Text fontSize="sm" color="white">Advanced AI insights</Text>
-                      </HStack>
-                      <HStack>
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                        <Text fontSize="sm" color="white">Creative Center integration</Text>
-                      </HStack>
-                      <HStack>
-                        <CheckCircle className="w-4 h-4 text-green-500" />
-                        <Text fontSize="sm" color="white">Priority support</Text>
-                      </HStack>
-                    </VStack>
-                  </VStack>
-                </Box>
-
-                <Button
-                  colorPalette="blue"
-                  size="lg"
-                  onClick={handleSubscribe}
-                  loading={isProcessing}
-                >
-                  <CreditCard className="w-5 h-5 mr-2" />
-                  Subscribe Now - $49/month
-                </Button>
-              </VStack>
+              <UnifiedSubscriptionBanner />
             )}
           </Card.Body>
         </Card.Root>

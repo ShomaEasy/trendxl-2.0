@@ -1549,15 +1549,23 @@ async def create_portal_session(
         return_url = f"{settings.cors_origins[0]}/" if settings.cors_origins else "/"
 
         # Create portal session
-        portal_session = await create_customer_portal_session(
-            customer_id=customer_id,
-            return_url=return_url
-        )
+        try:
+            portal_session = await create_customer_portal_session(
+                customer_id=customer_id,
+                return_url=return_url
+            )
 
-        return {
-            "success": True,
-            "portal_url": portal_session["url"]
-        }
+            return {
+                "success": True,
+                "portal_url": portal_session["url"]
+            }
+        except ValueError as stripe_error:
+            # Stripe not configured
+            logger.warning(f"⚠️ Stripe not configured for Customer Portal: {stripe_error}")
+            raise HTTPException(
+                status_code=503,
+                detail="Subscription management is temporarily unavailable. Please contact support or try again later."
+            )
 
     except HTTPException:
         raise

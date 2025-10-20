@@ -15,7 +15,6 @@ import ErrorState from '../components/ErrorState';
 import VideoModal from '../components/VideoModal';
 import AuthModal from '../components/AuthModal';
 import SubscriptionModal from '../components/SubscriptionModal';
-import { UnifiedSubscriptionBanner } from '../components/UnifiedSubscriptionBanner';
 
 function HomePage() {
   const location = useLocation();
@@ -168,9 +167,6 @@ function HomePage() {
 
   return (
     <div className="container mx-auto px-4 sm:px-6 md:px-8 py-6 sm:py-8 flex-grow">
-      {/* Unified Subscription Banner */}
-      {isAuthenticated && <UnifiedSubscriptionBanner refreshTrigger={profile ? Date.now() : undefined} />}
-      
       {/* Error State */}
       {error && (
         <ErrorState
