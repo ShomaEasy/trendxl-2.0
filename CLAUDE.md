@@ -448,27 +448,150 @@ STRIPE_WEBHOOK_SECRET=       # For Stripe webhook verification
 
 **GitHub Repository:** https://github.com/ShomaEasy/trendxl-2.0
 
-**Vercel Auto-Deploy (recommended):**
+**Vercel Token:** `TVO0VjVBuWcaDgLB8Biojfkn` (для автоматизации)
 
-Vercel автоматически деплоит изменения из GitHub при push:
+---
+
+## Автоматическая проверка перед deployment
+
+**ВСЕГДА запускайте перед push:**
+
+```bash
+python3 scripts/verify-deployment.py
+```
+
+Скрипт проверяет:
+- ✅ Environment variables в Vercel
+- ✅ Stripe API keys (test vs live mode)
+- ✅ Customer Portal configuration
+- ✅ Backend endpoints
+
+---
+
+## Vercel Auto-Deploy Workflow
+
+**1. Проверка конфигурации:**
+
+```bash
+# Автоматическая проверка всех настроек
+python3 scripts/verify-deployment.py
+```
+
+**2. Commit и Push:**
 
 ```bash
 # Development branch (auto-deploys to preview URL)
+git add .
+git commit -m "your changes"
 git push origin dev
 
 # Production branch (auto-deploys to production)
 git push origin main
 ```
 
-**ВАЖНО:** Не используйте Vercel CLI (`vercel --prod`). Deployment происходит автоматически через GitHub → Vercel integration.
+**3. Vercel автоматически деплоит через GitHub integration**
 
-**Vercel Configuration (vercel.json):**
+**ВАЖНО:** Не используйте Vercel CLI (`vercel --prod`). Deployment происходит автоматически!
+
+**4. Проверка deployment:**
+
+```bash
+# Список deployments
+vercel ls --token TVO0VjVBuWcaDgLB8Biojfkn
+
+# Просмотр логов
+vercel logs --token TVO0VjVBuWcaDgLB8Biojfkn
+```
+
+---
+
+## Vercel Environment Variables
+
+**Обязательные переменные:**
+
+- `SUPABASE_URL` - Supabase project URL
+- `SUPABASE_ANON_KEY` - Supabase anon key
+- `SUPABASE_SERVICE_ROLE_KEY` - Supabase service role key
+- `STRIPE_API_KEY` - Stripe secret key (test или live)
+- `STRIPE_PRICE_ID` - Stripe price ID
+- `STRIPE_WEBHOOK_SECRET` - Stripe webhook secret
+- `OPENAI_API_KEY` - OpenAI API key
+- `ENSEMBLE_API_TOKEN` - Ensemble Data API token
+- `PERPLEXITY_API_KEY` - Perplexity API key (optional)
+
+**Автоматическое добавление из .env:**
+
+```bash
+python3 /tmp/add_env_to_vercel.py
+```
+
+**Проверка переменных:**
+
+```bash
+vercel env ls --token TVO0VjVBuWcaDgLB8Biojfkn
+```
+
+---
+
+## Stripe Customer Portal Configuration
+
+**КРИТИЧЕСКИ ВАЖНО:** Test и Live режимы имеют ОТДЕЛЬНЫЕ конфигурации!
+
+**Проверка режима:**
+
+```bash
+# Скрипт покажет используемый режим
+python3 scripts/verify-deployment.py
+```
+
+**Если TEST mode** (`sk_test_xxx`):
+- Настроить: https://dashboard.stripe.com/test/settings/billing/portal
+- Нажать "Activate Customer Portal"
+
+**Если LIVE mode** (`sk_live_xxx`):
+- Настроить: https://dashboard.stripe.com/settings/billing/portal
+- Нажать "Activate Customer Portal"
+
+---
+
+## Vercel Configuration (vercel.json)
 
 - Build: `npm run build` → outputs to `dist/`
 - Framework: Vite
 - Rewrites: `/api/*` → `api/index.py` (300s timeout)
 - Environment: `VITE_BACKEND_API_URL=""` (empty for relative paths)
 - GitHub Integration: Auto-deploy on push to `dev` and `main` branches
+
+---
+
+## Troubleshooting Deployment
+
+**Environment variables не работают:**
+
+```bash
+# 1. Проверить что добавлены
+vercel env ls --token TVO0VjVBuWcaDgLB8Biojfkn
+
+# 2. Сделать redeploy для применения
+git commit --allow-empty -m "chore: trigger redeploy"
+git push origin dev
+```
+
+**404 на API endpoints:**
+
+- Проверить что последний commit задеплоен
+- Дождаться завершения build (5-10 мин)
+- Проверить логи: `vercel logs --token TVO0VjVBuWcaDgLB8Biojfkn`
+
+**Customer Portal не работает:**
+
+- Проверить test/live режим: `python3 scripts/verify-deployment.py`
+- Настроить Portal в соответствующем режиме
+- Подождать завершения deployment
+
+---
+
+См. также: `scripts/README.md` для полной документации по автоматизации
 
 ## Important Notes
 
