@@ -670,6 +670,296 @@ git push origin dev
 - Frontend falls back to traditional analysis automatically
 - Check `backend/main.py` for Creative Center endpoint implementation
 
+### Backend Import Errors on Vercel (FIXED - Oct 2025)
+
+**Symptom:** `FUNCTION_INVOCATION_FAILED`, registration/login returns 500 errors
+
+**Root Causes & Fixes:**
+
+**1. Missing Stripe function** (Fixed in commit 756bacc)
+```bash
+# Error: cannot import name 'create_customer_portal_session' from 'stripe_service'
+# Solution: Sync api/stripe_service.py with backend/stripe_service.py
+cp backend/stripe_service.py api/stripe_service.py
+```
+
+**2. Forward reference error** (Fixed in commit a022b90)
+```python
+# Error: name 'get_current_user' is not defined
+# Причина: В Vercel serverless функции должны быть определены ДО использования в Depends()
+
+# ❌ НЕ РАБОТАЕТ в Vercel:
+@app.get("/api/v1/protected")
+async def protected(user = Depends(get_current_user)):  # Line 275
+    pass
+
+async def get_current_user():  # Line 900
+    pass
+
+# ✅ РАБОТАЕТ:
+async def get_current_user():  # Line 215 - ПЕРЕД первым использованием
+    pass
+
+async def require_auth():  # Line 230
+    pass
+
+@app.get("/api/v1/protected")  # Line 275 - ПОСЛЕ определения
+async def protected(user = Depends(get_current_user)):
+    pass
+```
+
+**Исправление:** Переместить `get_current_user()` и `require_auth()` с line 900 на line 215 в обоих файлах:
+- `api/main.py`
+- `backend/main.py`
+
+**3. Missing Request import** (Fixed in commit a42a8c2)
+```python
+# Error: name 'Request' is not defined
+# Solution: Add Request to FastAPI imports
+
+# Было:
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks
+
+# Стало:
+from fastapi import FastAPI, HTTPException, Depends, BackgroundTasks, Request
+```
+
+**Диагностика будущих проблем:**
+
+Создайте diagnostic endpoints в `api/` для быстрой отладки:
+
+```python
+# api/check_files.py - проверка существования файлов
+# api/check_syspath.py - проверка импортов и sys.path
+```
+
+Добавьте в `vercel.json`:
+```json
+{
+  "source": "/check_files",
+  "destination": "/api/check_files.py"
+}
+```
+
+**Проверка после исправления:**
+```bash
+# Проверить что backend запустился
+curl https://your-deployment.vercel.app/health
+
+# Тест регистрации
+curl -X POST https://your-deployment.vercel.app/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","username":"testuser","password":"Test123"}'
+
+# Тест авторизации
+curl -X POST https://your-deployment.vercel.app/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"Test123"}'
+```
+
+**ВАЖНО:** При работе с Vercel serverless:
+- Функции должны быть определены ПЕРЕД использованием в decorators/Depends
+- Нет поддержки forward references как в обычном Python
+- Всегда синхронизируйте `backend/` и `api/` папки для одинаковых файлов
+
+## Stripe & Subscription System
+
+### Stripe Customer Portal Setup
+
+**КРИТИЧЕСКИ ВАЖНО:** Stripe имеет ОТДЕЛЬНЫЕ конфигурации для Test и Live режимов!
+
+**Проверка текущего режима:**
+
+```bash
+# Проверить какой API key используется
+python3 scripts/verify-deployment.py
+
+# Или вручную проверить переменную
+vercel env ls --token TVO0VjVBuWcaDgLB8Biojfkn | grep STRIPE_API_KEY
+```
+
+**Настройка Customer Portal:**
+
+**Test Mode** (если используется `sk_test_xxx`):
+1. Открыть: https://dashboard.stripe.com/test/settings/billing/portal
+2. Нажать "Activate Customer Portal"
+3. Настроить:
+   - ✅ Allow customers to update payment methods
+   - ✅ Allow customers to cancel subscriptions
+   - ✅ Allow customers to update billing information
+4. Сохранить
+
+**Live Mode** (если используется `sk_live_xxx`):
+1. Открыть: https://dashboard.stripe.com/settings/billing/portal
+2. Повторить те же настройки
+
+**Проверка работы Customer Portal:**
+
+```bash
+# Тест через API
+curl -X POST https://your-deployment.vercel.app/api/v1/subscription/portal \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json"
+
+# Должен вернуть: {"url": "https://billing.stripe.com/p/session/test_xxx"}
+```
+
+**Ошибка "Customer portal is disabled":**
+
+Означает что Customer Portal не активирован в том режиме (test/live), который использует ваш `STRIPE_API_KEY`.
+
+### Subscription Flow
+
+**1. Создание подписки:**
+
+```
+User → Click "Upgrade"
+     → POST /api/v1/subscription/checkout
+     → Stripe Checkout
+     → User pays
+     → Stripe Webhook
+     → Update Supabase profiles table
+```
+
+**2. Управление подпиской:**
+
+```
+User → Click "Manage Subscription"
+     → POST /api/v1/subscription/portal
+     → Stripe Customer Portal
+     → User changes/cancels
+     → Stripe Webhook
+     → Update Supabase
+```
+
+**3. Проверка статуса:**
+
+```javascript
+// Frontend: src/hooks/useTrendAnalysis.ts
+const { data: subscriptionInfo } = await checkSubscription();
+
+// subscriptionInfo:
+{
+  has_subscription: true,
+  subscription_status: "active",
+  subscription_end_date: "2025-11-20T00:00:00Z"
+}
+```
+
+**Webhook Events:**
+
+```python
+# api/main.py - Stripe webhook handler
+@app.post("/api/v1/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    # Handles:
+    # - checkout.session.completed
+    # - customer.subscription.updated
+    # - customer.subscription.deleted
+    # - invoice.payment_succeeded
+    # - invoice.payment_failed
+```
+
+**Environment Variables для Stripe:**
+
+```bash
+STRIPE_API_KEY=sk_test_xxx  # или sk_live_xxx для production
+STRIPE_PRICE_ID=price_xxx   # ID тарифного плана ($29/month)
+STRIPE_WEBHOOK_SECRET=whsec_xxx  # Для верификации webhooks
+```
+
+### Testing Subscription System
+
+**1. Test Cards (Test Mode):**
+
+```
+Успешная оплата: 4242 4242 4242 4242
+Требует 3D Secure: 4000 0025 0000 3155
+Отклонена: 4000 0000 0000 9995
+```
+
+**2. Создание тестовой подписки:**
+
+```bash
+# 1. Зарегистрировать пользователя
+curl -X POST https://your-deployment.vercel.app/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","username":"testuser","password":"Test123"}'
+
+# 2. Получить JWT токен из ответа
+
+# 3. Создать checkout session
+curl -X POST https://your-deployment.vercel.app/api/v1/subscription/checkout \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN" \
+  -H "Content-Type: application/json"
+
+# 4. Открыть URL из ответа и оплатить тестовой картой
+```
+
+**3. Проверка подписки:**
+
+```bash
+curl https://your-deployment.vercel.app/api/v1/subscription/check \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**4. Проверка Customer Portal:**
+
+```bash
+curl -X POST https://your-deployment.vercel.app/api/v1/subscription/portal \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+```
+
+**5. Проверка webhook events:**
+
+```bash
+# Stripe Dashboard → Developers → Webhooks → Select your endpoint
+# Должны видеть успешные события (200 статус)
+```
+
+### Subscription Database Schema
+
+**profiles table:**
+
+```sql
+-- Stripe-related fields
+stripe_customer_id VARCHAR        -- Stripe customer ID (cus_xxx)
+subscription_status VARCHAR        -- 'active', 'canceled', 'past_due', etc.
+subscription_end_date TIMESTAMP    -- Когда заканчивается подписка
+
+-- Проверка активной подписки в коде:
+-- has_subscription = subscription_status == 'active' AND subscription_end_date > NOW()
+```
+
+**Subscription Status Values:**
+
+- `active` - Активная подписка
+- `canceled` - Отменена пользователем (действует до end_date)
+- `past_due` - Просрочена оплата
+- `unpaid` - Неоплачена
+- `null` - Нет подписки
+
+### Admin Users Bypass
+
+Admin пользователи (`is_admin=true` в profiles) обходят все ограничения:
+
+```python
+# backend/main.py
+if current_user.is_admin:
+    # Skip subscription check
+    # Skip free trial check
+    # Unlimited analyses
+```
+
+**Создание admin пользователя:**
+
+```sql
+-- Supabase SQL Editor
+UPDATE auth.users
+SET raw_user_meta_data = raw_user_meta_data || '{"is_admin": true}'::jsonb
+WHERE email = 'admin@example.com';
+```
+
 ## Design Patterns & Best Practices
 
 ### Frontend Patterns
