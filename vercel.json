@@ -42,6 +42,10 @@
       "destination": "/api/check_files.py"
     },
     {
+      "source": "/check_syspath",
+      "destination": "/api/check_syspath.py"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
@@ -66,6 +70,9 @@
       "maxDuration": 10
     },
     "api/check_files.py": {
+      "maxDuration": 10
+    },
+    "api/check_syspath.py": {
       "maxDuration": 10
     }
   },
