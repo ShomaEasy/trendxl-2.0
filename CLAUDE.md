@@ -446,17 +446,21 @@ STRIPE_WEBHOOK_SECRET=       # For Stripe webhook verification
 
 ### Deployment
 
-**Vercel (recommended):**
+**GitHub Repository:** https://github.com/ShomaEasy/trendxl-2.0
+
+**Vercel Auto-Deploy (recommended):**
+
+Vercel автоматически деплоит изменения из GitHub при push:
 
 ```bash
-git push origin main  # Auto-deploys via Vercel integration
+# Development branch (auto-deploys to preview URL)
+git push origin dev
+
+# Production branch (auto-deploys to production)
+git push origin main
 ```
 
-**Manual deploy:**
-
-```bash
-vercel --prod
-```
+**ВАЖНО:** Не используйте Vercel CLI (`vercel --prod`). Deployment происходит автоматически через GitHub → Vercel integration.
 
 **Vercel Configuration (vercel.json):**
 
@@ -464,6 +468,7 @@ vercel --prod
 - Framework: Vite
 - Rewrites: `/api/*` → `api/index.py` (300s timeout)
 - Environment: `VITE_BACKEND_API_URL=""` (empty for relative paths)
+- GitHub Integration: Auto-deploy on push to `dev` and `main` branches
 
 ## Important Notes
 
