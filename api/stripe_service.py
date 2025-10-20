@@ -363,3 +363,35 @@ async def create_public_payment_link(user_email: str, success_url: str = "", can
     except StripeError as e:
         logger.error(f"❌ Failed to create public payment link: {e}")
         raise ValueError(f"Failed to create payment link: {str(e)}")
+
+
+async def create_customer_portal_session(customer_id: str, return_url: str = "") -> Dict[str, Any]:
+    """
+    Create a Stripe Customer Portal session for subscription management
+
+    Args:
+        customer_id: Stripe customer ID
+        return_url: URL to redirect back to after portal session
+
+    Returns:
+        Dict with portal session URL
+    """
+    try:
+        client = get_stripe_client()
+
+        # Create portal session
+        session = client.billing_portal.sessions.create(params={
+            "customer": customer_id,
+            "return_url": return_url or "https://yourdomain.com/"
+        })
+
+        logger.info(f"✅ Customer portal session created: {session.id} for customer {customer_id}")
+
+        return {
+            "session_id": session.id,
+            "url": session.url
+        }
+
+    except StripeError as e:
+        logger.error(f"❌ Failed to create customer portal session: {e}")
+        raise ValueError(f"Failed to create customer portal session: {str(e)}")
