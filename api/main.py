@@ -935,7 +935,7 @@ async def require_subscription(
             f"🔑 Admin user {current_user.username} bypassing subscription requirement")
         return current_user
 
-    has_active = check_active_subscription(current_user.id)
+    has_active = await check_active_subscription(current_user.id)
 
     if not has_active:
         subscription_info = get_user_subscription_info(current_user.id)
@@ -1253,7 +1253,7 @@ async def get_free_trial_status(
             }
 
         # Check if user has subscription
-        has_subscription = check_active_subscription(current_user.id)
+        has_subscription = await check_active_subscription(current_user.id)
 
         if has_subscription:
             return {
@@ -1425,7 +1425,7 @@ async def check_subscription_status(
     try:
         logger.info(f"🔍 Checking subscription for user: {current_user.id}")
 
-        has_active = check_active_subscription(current_user.id)
+        has_active = await check_active_subscription(current_user.id)
         logger.info(f"  has_active_subscription: {has_active}")
 
         subscription_info = get_user_subscription_info(current_user.id)
