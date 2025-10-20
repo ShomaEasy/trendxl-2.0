@@ -38,6 +38,10 @@
       "destination": "/api/test_import.py"
     },
     {
+      "source": "/check_files",
+      "destination": "/api/check_files.py"
+    },
+    {
       "source": "/(.*)",
       "destination": "/index.html"
     }
@@ -59,6 +63,9 @@
       "maxDuration": 10
     },
     "api/test_import.py": {
+      "maxDuration": 10
+    },
+    "api/check_files.py": {
       "maxDuration": 10
     }
   },
