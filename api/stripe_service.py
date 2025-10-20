@@ -347,7 +347,11 @@ async def create_public_payment_link(user_email: str, success_url: str = "", can
             "cancel_url": cancel_url or "https://yourdomain.com/",
             "allow_promotion_codes": True,
             "billing_address_collection": "auto",
-            "customer_email": user_email if user_email else None
+            "customer_email": user_email if user_email else None,
+            "payment_method_collection": "always",  # Always collect payment method
+            "subscription_data": {
+                "default_payment_method": "auto"  # Automatically set as default for future payments
+            }
         }
 
         session = client.checkout.sessions.create(params=session_params)
