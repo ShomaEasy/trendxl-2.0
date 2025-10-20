@@ -209,6 +209,36 @@ async def general_exception_handler(request, exc):
         ).model_dump()
     )
 
+# Authentication helper functions
+
+
+async def get_current_user(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
+) -> Optional[UserProfile]:
+    """Get current authenticated user from Supabase JWT token"""
+    if not credentials:
+        return None
+
+    try:
+        # Get user from Supabase Auth token
+        user_data = await get_current_user_from_token(credentials.credentials)
+        return user_to_profile(user_data)
+    except Exception as e:
+        logger.error(f"Failed to get user from token: {e}")
+        return None
+
+
+async def require_auth(
+    current_user: Optional[UserProfile] = Depends(get_current_user)
+) -> UserProfile:
+    """Require authentication - raises 401 if not authenticated"""
+    if not current_user:
+        raise HTTPException(
+            status_code=401,
+            detail="Not authenticated. Please log in."
+        )
+    return current_user
+
 # Health check endpoint
 
 
@@ -893,36 +923,6 @@ async def health_check():
             timestamp=get_current_timestamp(),
             services={"error": str(e)}
         )
-
-# Authentication helper functions
-
-
-async def get_current_user(
-    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
-) -> Optional[UserProfile]:
-    """Get current authenticated user from Supabase JWT token"""
-    if not credentials:
-        return None
-
-    try:
-        # Get user from Supabase Auth token
-        user_data = await get_current_user_from_token(credentials.credentials)
-        return user_to_profile(user_data)
-    except Exception as e:
-        logger.error(f"Failed to get user from token: {e}")
-        return None
-
-
-async def require_auth(
-    current_user: Optional[UserProfile] = Depends(get_current_user)
-) -> UserProfile:
-    """Require authentication - raises 401 if not authenticated"""
-    if not current_user:
-        raise HTTPException(
-            status_code=401,
-            detail="Not authenticated. Please log in."
-        )
-    return current_user
 
 
 async def require_subscription(
