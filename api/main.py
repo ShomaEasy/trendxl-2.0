@@ -40,13 +40,26 @@ from utils import RateLimiter, get_current_timestamp
 from auth_service_supabase import (
     UserCreate, UserLogin, UserProfile, UserProfileUpdate, Token, TokenData,
     verify_password, get_password_hash, create_access_token, decode_access_token,
-    user_to_profile, register_user, login_user,
-    update_user_profile, logout_user, get_current_user,
-    # Legacy compatibility functions
-    create_user, get_user_by_email, get_user_by_username,
-    get_user_by_id, update_last_login,
-    record_token_usage, get_user_token_usage, get_user_token_summary,
-    get_user_token_usage_by_period
+    user_to_profile, register_user, login_user, get_current_user as get_current_user_from_token,
+    update_user_profile as update_profile_service, logout_user
+)
+# Import Supabase helpers
+from supabase_client import (
+    get_supabase,
+    check_user_can_analyze,
+    record_free_trial_usage,
+    get_free_trial_info,
+    insert_user as create_user_supabase,
+    get_user_by_link,
+    record_token_usage,
+    get_user_token_usage,
+    get_user_token_summary,
+    get_user_token_usage_by_period,
+    update_user_stripe_customer,
+    update_user_subscription,
+    get_user_subscription_info,
+    check_active_subscription,
+    get_user_by_stripe_customer_id
 )
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from error_responses import (
@@ -63,26 +76,8 @@ from stripe_service import (
     cancel_subscription,
     reactivate_subscription,
     create_checkout_session,
-    create_public_payment_link
-)
-from supabase_client import (
-    get_supabase,
-    insert_user as create_user_supabase,
-    get_user_by_link,
-    record_token_usage as record_token_usage_supabase,
-    get_user_token_usage as get_user_token_usage_supabase,
-    get_user_token_summary as get_user_token_summary_supabase,
-    get_user_token_usage_by_period as get_user_token_usage_by_period_supabase,
-    update_user_stripe_customer,
-    update_user_subscription,
-    get_user_subscription_info,
-    check_active_subscription,
-    get_user_by_stripe_customer_id,
-    # Free trial functions
-    can_use_free_trial,
-    record_free_trial_usage,
-    get_free_trial_info,
-    check_user_can_analyze
+    create_public_payment_link,
+    create_customer_portal_session
 )
 
 # Configure logging
@@ -348,6 +343,8 @@ async def analyze_trends(
         # Extract username for caching and tracking
         from utils import extract_tiktok_username
         username = extract_tiktok_username(request.profile_url)
+        logger.info(f"✅ Extracted username from URL: '{username}'")
+        print(f"✅ Extracted username: '{username}'")
 
         # CRITICAL: Record free trial usage IMMEDIATELY for free users
         # Free trial is consumed on EVERY request (cached or not)
@@ -665,8 +662,8 @@ async def creative_center_hashtags(
 
 @app.post("/api/v1/analyze-creative-center", response_model=CreativeCenterAnalysisResponse)
 async def analyze_creative_center_complete(
-    request: CreativeCenterAnalysisRequest
-    # rate_limit: None = Depends(check_rate_limit)
+    request: CreativeCenterAnalysisRequest,
+    current_user: Optional[UserProfile] = Depends(get_current_user)
 ):
     """
     Complete Creative Center + Ensemble Data analysis workflow.
@@ -676,13 +673,86 @@ async def analyze_creative_center_complete(
     2. Searches trending videos for each hashtag via Ensemble Data
     3. Applies intelligent filtering and relevance analysis
     4. Returns comprehensive results with metadata
+    
+    Free users get 1 analysis per day. Subscription required for unlimited access.
     """
     try:
         from utils import extract_tiktok_username
 
+        # Check if user is authenticated
+        if not current_user:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "error": "Authentication required",
+                    "message": "Please log in to use trend analysis.",
+                    "action": "login"
+                }
+            )
+
+        # Track if this is a free trial usage
+        is_free_trial_usage = False
+
+        # Admins bypass all checks
+        if current_user.is_admin:
+            logger.info(
+                f"🔑 Admin user {current_user.username} bypassing all checks")
+        else:
+            # Check if user can analyze (subscription or free trial)
+            can_analyze, reason, details = await check_user_can_analyze(current_user.id)
+
+            if not can_analyze:
+                trial_info = details.get("trial_info", {})
+                today_count = trial_info.get(
+                    "today_count", 0) if trial_info else 0
+
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "Analysis limit reached",
+                        "message": details.get("message", "You've used your free daily analysis. Subscribe to get unlimited access!"),
+                        "today_count": today_count,
+                        "action": "subscribe",
+                        "type": "free_trial_exhausted"
+                    }
+                )
+
+            # Log what type of access user is using
+            if reason == "free_trial":
+                is_free_trial_usage = True
+                logger.info(
+                    f"🎁 User {current_user.username} using FREE TRIAL for Creative Center analysis")
+            elif reason == "active_subscription":
+                logger.info(
+                    f"💳 User {current_user.username} using SUBSCRIPTION for Creative Center analysis")
+
         username = extract_tiktok_username(request.profile_url)
         logger.info(
             f"🚀 Starting complete Creative Center analysis for @{username}")
+        logger.info(f"👤 User: {current_user.username} (ID: {current_user.id})")
+
+        # CRITICAL: Record free trial usage IMMEDIATELY for free users
+        if is_free_trial_usage:
+            try:
+                success = await record_free_trial_usage(current_user.id, username)
+                if not success:
+                    logger.error(
+                        f"❌ record_free_trial_usage returned False for {current_user.username}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Failed to record free trial usage. Please try again."
+                    )
+                logger.info(
+                    f"🎁 Free trial used by {current_user.username} for @{username} (Creative Center)")
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"❌ Failed to record free trial usage: {e}")
+                logger.error(f"❌ Error type: {type(e).__name__}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to record free trial usage: {str(e)}"
+                )
 
         # Check API keys
         if not getattr(settings, 'perplexity_api_key', None) or settings.perplexity_api_key.strip() in [
@@ -830,19 +900,17 @@ async def health_check():
 async def get_current_user(
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)
 ) -> Optional[UserProfile]:
-    """Get current authenticated user from JWT token"""
+    """Get current authenticated user from Supabase JWT token"""
     if not credentials:
         return None
 
-    token_data = decode_access_token(credentials.credentials)
-    if not token_data or not token_data.user_id:
+    try:
+        # Get user from Supabase Auth token
+        user_data = await get_current_user_from_token(credentials.credentials)
+        return user_to_profile(user_data)
+    except Exception as e:
+        logger.error(f"Failed to get user from token: {e}")
         return None
-
-    user = await get_user_by_id(token_data.user_id)
-    if not user:
-        return None
-
-    return user_to_profile(user)
 
 
 async def require_auth(
@@ -854,6 +922,36 @@ async def require_auth(
             status_code=401,
             detail="Not authenticated. Please log in."
         )
+    return current_user
+
+
+async def require_subscription(
+    current_user: UserProfile = Depends(require_auth)
+) -> UserProfile:
+    """Require active subscription - raises 403 if no active subscription (admins bypass)"""
+    # Admins bypass subscription requirement
+    if current_user.is_admin:
+        logger.info(
+            f"🔑 Admin user {current_user.username} bypassing subscription requirement")
+        return current_user
+
+    has_active = check_active_subscription(current_user.id)
+
+    if not has_active:
+        subscription_info = get_user_subscription_info(current_user.id)
+        status = subscription_info.get(
+            "stripe_subscription_status") if subscription_info else None
+
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error": "Active subscription required",
+                "message": "You need an active subscription to use this feature. Please subscribe to continue.",
+                "subscription_status": status,
+                "action": "subscribe"
+            }
+        )
+
     return current_user
 
 
@@ -984,26 +1082,20 @@ async def get_me(current_user: UserProfile = Depends(require_auth)):
 @app.put("/api/v1/auth/profile", response_model=UserProfile)
 async def update_profile(
     profile_data: UserProfileUpdate,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
     current_user: UserProfile = Depends(require_auth)
 ):
-    """Update current user profile"""
+    """Update current user profile using Supabase"""
     try:
-        updated_user = update_user_profile(
-            user_id=current_user.id,
-            full_name=profile_data.full_name,
-            avatar_url=profile_data.avatar_url,
-            bio=profile_data.bio
-        )
-
-        if not updated_user:
-            raise HTTPException(status_code=404, detail="User not found")
+        # Update profile in Supabase
+        updated_user = await update_profile_service(credentials.credentials, profile_data)
 
         logger.info(f"✅ Profile updated: {current_user.username}")
 
         return user_to_profile(updated_user)
 
-    except HTTPException:
-        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"❌ Profile update failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -1026,23 +1118,14 @@ async def get_token_usage_summary(
     - First and last analysis timestamps
     """
     try:
-        # Verify token
-        if not credentials:
-            raise HTTPException(
-                status_code=401, detail="Authentication required")
-
-        token_data = decode_access_token(credentials.credentials)
-        current_user = await get_user_by_id(token_data["user_id"])
-
-        if not current_user:
-            raise HTTPException(
-                status_code=401, detail="Invalid authentication")
+        # Get current user from token
+        user_profile = await get_current_user_from_token(credentials.credentials)
 
         # Get token usage summary
-        summary = await get_user_token_summary(current_user["id"])
+        summary = await get_user_token_summary(user_profile["id"])
 
         logger.info(
-            f"📊 Token usage summary requested by user {current_user['id']}")
+            f"📊 Token usage summary requested by user {user_profile['id']}")
 
         return {
             "success": True,
@@ -1073,26 +1156,17 @@ async def get_token_usage_history(
     - List of token usage records with timestamps
     """
     try:
-        # Verify token
-        if not credentials:
-            raise HTTPException(
-                status_code=401, detail="Authentication required")
-
-        token_data = decode_access_token(credentials.credentials)
-        current_user = await get_user_by_id(token_data["user_id"])
-
-        if not current_user:
-            raise HTTPException(
-                status_code=401, detail="Invalid authentication")
+        # Get current user from token
+        user_profile = await get_current_user_from_token(credentials.credentials)
 
         # Limit max results
         limit = min(limit, 100)
 
         # Get token usage history
-        history = await get_user_token_usage(current_user["id"], limit, offset)
+        history = await get_user_token_usage(user_profile["id"], limit, offset)
 
         logger.info(
-            f"📜 Token usage history requested by user {current_user['id']} (limit={limit}, offset={offset})")
+            f"📜 Token usage history requested by user {user_profile['id']} (limit={limit}, offset={offset})")
 
         return {
             "success": True,
@@ -1128,17 +1202,8 @@ async def get_token_usage_by_period(
     - Total estimated cost in period
     """
     try:
-        # Verify token
-        if not credentials:
-            raise HTTPException(
-                status_code=401, detail="Authentication required")
-
-        token_data = decode_access_token(credentials.credentials)
-        current_user = await get_user_by_id(token_data["user_id"])
-
-        if not current_user:
-            raise HTTPException(
-                status_code=401, detail="Invalid authentication")
+        # Get current user from token
+        user_profile = await get_current_user_from_token(credentials.credentials)
 
         # Validate period
         if period_days < 1 or period_days > 365:
@@ -1146,10 +1211,10 @@ async def get_token_usage_by_period(
                 status_code=400, detail="period_days must be between 1 and 365")
 
         # Get token usage for period
-        usage = await get_user_token_usage_by_period(current_user["id"], period_days)
+        usage = await get_user_token_usage_by_period(user_profile["id"], period_days)
 
         logger.info(
-            f"📅 Token usage by period requested by user {current_user['id']} (period={period_days} days)")
+            f"📅 Token usage by period requested by user {user_profile['id']} (period={period_days} days)")
 
         return {
             "success": True,
@@ -1188,7 +1253,7 @@ async def get_free_trial_status(
             }
 
         # Check if user has subscription
-        has_subscription = await check_active_subscription(current_user.id)
+        has_subscription = check_active_subscription(current_user.id)
 
         if has_subscription:
             return {
@@ -1242,7 +1307,7 @@ async def get_subscription_info(
     """Get current user's subscription information"""
     try:
         # Get subscription info from database
-        db_subscription = await get_user_subscription_info(current_user.id)
+        db_subscription = get_user_subscription_info(current_user.id)
 
         if not db_subscription or not db_subscription.get("stripe_subscription_id"):
             return {
@@ -1251,12 +1316,29 @@ async def get_subscription_info(
             }
 
         # Get latest subscription details from Stripe
-        subscription = await get_subscription(db_subscription["stripe_subscription_id"])
-
-        return {
-            "has_subscription": True,
-            "subscription": subscription
-        }
+        try:
+            subscription = await get_subscription(db_subscription["stripe_subscription_id"])
+            return {
+                "has_subscription": True,
+                "subscription": subscription
+            }
+        except ValueError as stripe_error:
+            # Stripe not configured - return database info only
+            logger.warning(f"⚠️ Stripe not configured, returning DB info only: {stripe_error}")
+            return {
+                "has_subscription": bool(db_subscription.get("stripe_subscription_status") == "active"),
+                "subscription": {
+                    "subscription_id": db_subscription.get("stripe_subscription_id"),
+                    "status": db_subscription.get("stripe_subscription_status"),
+                    "current_period_start": None,
+                    "current_period_end": db_subscription.get("subscription_end_date"),
+                    "cancel_at_period_end": False,
+                    "canceled_at": None,
+                    "plan_amount": 4900,  # $49/month default
+                    "plan_currency": "usd",
+                    "plan_interval": "month"
+                }
+            }
 
     except Exception as e:
         logger.error(f"❌ Failed to get subscription info: {e}")
@@ -1272,7 +1354,7 @@ async def create_subscription_checkout(
     """Create a Stripe Checkout session for subscription"""
     try:
         # Get user's Stripe customer ID
-        db_subscription = await get_user_subscription_info(current_user.id)
+        db_subscription = get_user_subscription_info(current_user.id)
 
         if not db_subscription or not db_subscription.get("stripe_customer_id"):
             raise HTTPException(
@@ -1341,9 +1423,13 @@ async def check_subscription_status(
 ):
     """Check if current user has an active subscription"""
     try:
-        has_active = await check_active_subscription(current_user.id)
+        logger.info(f"🔍 Checking subscription for user: {current_user.id}")
 
-        subscription_info = await get_user_subscription_info(current_user.id)
+        has_active = check_active_subscription(current_user.id)
+        logger.info(f"  has_active_subscription: {has_active}")
+
+        subscription_info = get_user_subscription_info(current_user.id)
+        logger.info(f"  subscription_info: {subscription_info}")
 
         return {
             "has_active_subscription": has_active,
@@ -1352,8 +1438,10 @@ async def check_subscription_status(
         }
 
     except Exception as e:
-        logger.error(f"❌ Failed to check subscription: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Failed to check subscription for user {current_user.id}: {e}")
+        import traceback
+        logger.error(f"  Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to check subscription: {str(e)}")
 
 
 @app.post("/api/v1/subscription/cancel")
@@ -1364,7 +1452,7 @@ async def cancel_user_subscription(
     """Cancel user's subscription"""
     try:
         # Get user's subscription ID
-        db_subscription = await get_user_subscription_info(current_user.id)
+        db_subscription = get_user_subscription_info(current_user.id)
 
         if not db_subscription or not db_subscription.get("stripe_subscription_id"):
             raise HTTPException(
@@ -1405,7 +1493,7 @@ async def reactivate_user_subscription(
     """Reactivate a subscription that was set to cancel"""
     try:
         # Get user's subscription ID
-        db_subscription = await get_user_subscription_info(current_user.id)
+        db_subscription = get_user_subscription_info(current_user.id)
 
         if not db_subscription or not db_subscription.get("stripe_subscription_id"):
             raise HTTPException(
@@ -1438,18 +1526,84 @@ async def reactivate_user_subscription(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/v1/subscription/manage")
+async def create_portal_session(
+    current_user: UserProfile = Depends(require_auth)
+):
+    """Create a Stripe Customer Portal session for subscription management"""
+    try:
+        # Get user's Stripe customer ID
+        client = get_supabase()
+        user_response = client.table("profiles").select(
+            "stripe_customer_id").eq("id", current_user.id).execute()
+
+        if not user_response.data or not user_response.data[0].get("stripe_customer_id"):
+            raise HTTPException(
+                status_code=404,
+                detail="No Stripe customer found. Please subscribe first."
+            )
+
+        customer_id = user_response.data[0]["stripe_customer_id"]
+
+        # Get return URL from settings or use default
+        return_url = f"{settings.cors_origins[0]}/" if settings.cors_origins else "/"
+
+        # Create portal session
+        try:
+            portal_session = await create_customer_portal_session(
+                customer_id=customer_id,
+                return_url=return_url
+            )
+
+            return {
+                "success": True,
+                "portal_url": portal_session["url"]
+            }
+        except ValueError as stripe_error:
+            # Stripe not configured
+            logger.warning(f"⚠️ Stripe not configured for Customer Portal: {stripe_error}")
+            raise HTTPException(
+                status_code=503,
+                detail="Subscription management is temporarily unavailable. Please contact support or try again later."
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to create portal session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Stripe webhook endpoint for handling subscription events
 @app.post("/api/v1/webhook/stripe")
-async def stripe_webhook(request: dict):
+async def stripe_webhook(request: Request):
     """Handle Stripe webhook events"""
     try:
-        # TODO: Verify webhook signature in production
-        # from stripe import StripeClient
-        # client = StripeClient(settings.stripe_api_key)
-        # event = client.construct_event(payload, sig_header, settings.stripe_webhook_secret)
+        # Get raw body and signature for webhook verification
+        import stripe
 
-        event_type = request.get("type")
-        data = request.get("data", {}).get("object", {})
+        payload = await request.body()
+        sig_header = request.headers.get("stripe-signature")
+
+        # Verify webhook signature in production
+        if settings.stripe_webhook_secret:
+            try:
+                event = stripe.Webhook.construct_event(
+                    payload, sig_header, settings.stripe_webhook_secret
+                )
+                webhook_data = event
+                logger.info("✅ Webhook signature verified")
+            except stripe.error.SignatureVerificationError as e:
+                logger.error(f"❌ Webhook signature verification failed: {e}")
+                raise HTTPException(status_code=400, detail="Invalid signature")
+        else:
+            # Development mode without signature verification
+            import json
+            webhook_data = json.loads(payload)
+            logger.warning("⚠️ Webhook signature verification skipped (no secret configured)")
+
+        event_type = webhook_data.get("type")
+        data = webhook_data.get("data", {}).get("object", {})
 
         logger.info(f"📨 Received Stripe webhook: {event_type}")
 
@@ -1482,10 +1636,11 @@ async def stripe_webhook(request: dict):
                     f"⚠️ User not found for Stripe customer: {customer_id}")
 
         elif event_type == "customer.subscription.updated":
-            # Subscription status changed
+            # Subscription updated (status change, renewal, etc.)
             subscription_id = data.get("id")
             customer_id = data.get("customer")
             status = data.get("status")
+            current_period_start = data.get("current_period_start")
             current_period_end = data.get("current_period_end")
 
             # Find user by Stripe customer ID
@@ -1496,17 +1651,19 @@ async def stripe_webhook(request: dict):
                     user_id=user["id"],
                     subscription_id=subscription_id,
                     status=status,
+                    start_date=datetime.fromtimestamp(
+                        current_period_start).isoformat() if current_period_start else None,
                     end_date=datetime.fromtimestamp(
                         current_period_end).isoformat() if current_period_end else None
                 )
                 logger.info(
-                    f"✅ Subscription updated: {subscription_id} for user {user['id']}")
+                    f"✅ Subscription updated: {subscription_id} - {status} for user {user['id']}")
             else:
                 logger.warning(
                     f"⚠️ User not found for Stripe customer: {customer_id}")
 
         elif event_type == "customer.subscription.deleted":
-            # Subscription cancelled
+            # Subscription canceled/ended
             subscription_id = data.get("id")
             customer_id = data.get("customer")
 
@@ -1519,16 +1676,106 @@ async def stripe_webhook(request: dict):
                     status="canceled"
                 )
                 logger.info(
-                    f"✅ Subscription cancelled: {subscription_id} for user {user['id']}")
+                    f"✅ Subscription canceled: {subscription_id} for user {user['id']}")
             else:
                 logger.warning(
                     f"⚠️ User not found for Stripe customer: {customer_id}")
 
-        return {"status": "success", "event_type": event_type}
+        elif event_type == "checkout.session.completed":
+            # Checkout completed - link customer to user if needed
+            session = data
+            customer_id = session.get("customer")
+            customer_email = session.get("customer_details", {}).get("email")
+            subscription_id = session.get("subscription")
+
+            logger.info(
+                f"✅ Checkout completed: session={session.get('id')}, customer={customer_id}, email={customer_email}, subscription={subscription_id}")
+
+            # Try to find user by email and link Stripe customer
+            if customer_email and customer_id:
+                client = get_supabase()
+                # Find user by email in auth.users
+                try:
+                    # Search in profiles table
+                    response = client.table("profiles").select(
+                        "*").eq("email", customer_email).execute()
+                    if response.data:
+                        user = response.data[0]
+                        user_id = user["id"]
+
+                        # Update Stripe customer ID if not set
+                        if not user.get("stripe_customer_id"):
+                            await update_user_stripe_customer(user_id, customer_id)
+                            logger.info(
+                                f"✅ Linked Stripe customer {customer_id} to user {user_id}")
+
+                        # Save subscription_id and activate subscription
+                        if subscription_id:
+                            await update_user_subscription(
+                                user_id=user_id,
+                                subscription_id=subscription_id,
+                                status="active"
+                            )
+                            logger.info(
+                                f"✅ Activated subscription {subscription_id} for user {user_id}")
+                except Exception as e:
+                    logger.error(f"❌ Failed to process checkout completion: {e}")
+
+        elif event_type == "invoice.payment_succeeded":
+            # Recurring payment succeeded
+            invoice = data
+            customer_id = invoice.get("customer")
+            subscription_id = invoice.get("subscription")
+
+            logger.info(
+                f"✅ Payment succeeded: invoice={invoice.get('id')}, customer={customer_id}, subscription={subscription_id}")
+
+            if customer_id and subscription_id:
+                # Find user by Stripe customer ID
+                user = await get_user_by_stripe_customer_id(customer_id)
+                if user:
+                    # Update subscription status to "active"
+                    await update_user_subscription(
+                        user_id=user["id"],
+                        subscription_id=subscription_id,
+                        status="active"
+                    )
+                    logger.info(
+                        f"✅ Renewed subscription {subscription_id} for user {user['id']}")
+                else:
+                    logger.warning(
+                        f"⚠️ User not found for Stripe customer: {customer_id}")
+
+        elif event_type == "invoice.payment_failed":
+            # Recurring payment failed
+            invoice = data
+            customer_id = invoice.get("customer")
+            subscription_id = invoice.get("subscription")
+
+            logger.warning(
+                f"⚠️ Payment failed: invoice={invoice.get('id')}, customer={customer_id}, subscription={subscription_id}")
+
+            if customer_id and subscription_id:
+                # Find user by Stripe customer ID
+                user = await get_user_by_stripe_customer_id(customer_id)
+                if user:
+                    # Update subscription status to "past_due"
+                    await update_user_subscription(
+                        user_id=user["id"],
+                        subscription_id=subscription_id,
+                        status="past_due"
+                    )
+                    logger.warning(
+                        f"⚠️ Marked subscription {subscription_id} as past_due for user {user['id']}")
+                else:
+                    logger.warning(
+                        f"⚠️ User not found for Stripe customer: {customer_id}")
+
+        return {"received": True}
 
     except Exception as e:
-        logger.error(f"❌ Stripe webhook processing failed: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"❌ Webhook processing failed: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # Root endpoint
@@ -1547,20 +1794,17 @@ async def root():
             "auth_login": "/api/v1/auth/login",
             "auth_me": "/api/v1/auth/me",
             "auth_profile": "/api/v1/auth/profile",
+            "subscription_info": "/api/v1/subscription/info",
+            "subscription_checkout": "/api/v1/subscription/checkout",
+            "subscription_cancel": "/api/v1/subscription/cancel",
+            "subscription_reactivate": "/api/v1/subscription/reactivate",
             "analyze": "/api/v1/analyze",
             "profile": "/api/v1/profile",
             "posts": "/api/v1/posts",
             "hashtag_search": "/api/v1/hashtag/search",
             "user_search": "/api/v1/users/search",
             "creative_center_hashtags": "/api/v1/creative-center/hashtags",
-            "analyze_creative_center": "/api/v1/analyze-creative-center",
-            "subscription_info": "/api/v1/subscription/info",
-            "subscription_checkout": "/api/v1/subscription/checkout",
-            "subscription_create_payment_link": "/api/v1/subscription/create-payment-link",
-            "subscription_check": "/api/v1/subscription/check",
-            "subscription_cancel": "/api/v1/subscription/cancel",
-            "subscription_reactivate": "/api/v1/subscription/reactivate",
-            "stripe_webhook": "/api/v1/webhook/stripe"
+            "analyze_creative_center": "/api/v1/analyze-creative-center"
         }
     }
 
