@@ -216,24 +216,28 @@ const MyProfile: React.FC = () => {
           </Card.Body>
         </Card.Root>
 
-        {/* Subscription Card */}
-        <Card.Root>
-          <Card.Header>
-            <HStack justify="space-between">
-              <HStack>
-                <CreditCard className="w-5 h-5" />
-                <Heading size="md">Subscription</Heading>
+        {/* Subscription Banner - Always show outside Card */}
+        <UnifiedSubscriptionBanner />
+
+        {/* Subscription Card - Only show if has active subscription */}
+        {subscriptionInfo?.has_subscription && subscriptionInfo.subscription && (
+          <Card.Root>
+            <Card.Header>
+              <HStack justify="space-between">
+                <HStack>
+                  <CreditCard className="w-5 h-5" />
+                  <Heading size="md">Subscription Details</Heading>
+                </HStack>
               </HStack>
-            </HStack>
-          </Card.Header>
-          <Card.Body>
-            {isLoading ? (
-              <Box textAlign="center" py={8}>
-                <Spinner size="lg" />
-                <Text mt={4} color="white">Loading subscription information...</Text>
-              </Box>
-            ) : subscriptionInfo?.has_subscription && subscriptionInfo.subscription ? (
-              <VStack gap={6} align="stretch">
+            </Card.Header>
+            <Card.Body>
+              {isLoading ? (
+                <Box textAlign="center" py={8}>
+                  <Spinner size="lg" />
+                  <Text mt={4} color="white">Loading subscription information...</Text>
+                </Box>
+              ) : (
+                <VStack gap={6} align="stretch">
                 {/* Subscription Status */}
                 <HStack justify="space-between">
                   <Text fontWeight="bold" color="white">Status:</Text>
@@ -315,12 +319,11 @@ const MyProfile: React.FC = () => {
                     </Button>
                   )}
                 </HStack>
-              </VStack>
-            ) : (
-              <UnifiedSubscriptionBanner />
-            )}
-          </Card.Body>
-        </Card.Root>
+                </VStack>
+              )}
+            </Card.Body>
+          </Card.Root>
+        )}
       </VStack>
     </Container>
   );

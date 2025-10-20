@@ -155,9 +155,12 @@ export function UnifiedSubscriptionBanner({ refreshTrigger }: UnifiedSubscriptio
             onClick={handleManageSubscription}
             isLoading={creatingPayment}
             colorScheme="green"
-            variant="outline"
+            variant="solid"
             size="sm"
             flexShrink={0}
+            bg="green.600"
+            color="white"
+            _hover={{ bg: "green.700" }}
           >
             <HStack gap={2}>
               <Icon as={Settings} boxSize={4} />
