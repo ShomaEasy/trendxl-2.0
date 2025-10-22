@@ -935,7 +935,7 @@ async def require_subscription(
             f"🔑 Admin user {current_user.username} bypassing subscription requirement")
         return current_user
 
-    has_active = await check_active_subscription(current_user.id)
+    has_active = check_active_subscription(current_user.id)
 
     if not has_active:
         subscription_info = get_user_subscription_info(current_user.id)
@@ -1253,7 +1253,7 @@ async def get_free_trial_status(
             }
 
         # Check if user has subscription
-        has_subscription = await check_active_subscription(current_user.id)
+        has_subscription = check_active_subscription(current_user.id)
 
         if has_subscription:
             return {
@@ -1356,15 +1356,36 @@ async def create_subscription_checkout(
         # Get user's Stripe customer ID
         db_subscription = get_user_subscription_info(current_user.id)
 
+        # If no customer ID exists, create one automatically
         if not db_subscription or not db_subscription.get("stripe_customer_id"):
-            raise HTTPException(
-                status_code=400,
-                detail="Stripe customer not found. Please contact support."
-            )
+            logger.info(f"🔄 No Stripe customer found for user {current_user.id}, creating one...")
+            try:
+                stripe_customer = await create_stripe_customer(
+                    email=current_user.email,
+                    username=current_user.username or current_user.email.split('@')[0],
+                    user_id=current_user.id
+                )
+
+                # Save customer ID to database
+                await update_user_stripe_customer(
+                    user_id=current_user.id,
+                    stripe_customer_id=stripe_customer["customer_id"]
+                )
+
+                customer_id = stripe_customer["customer_id"]
+                logger.info(f"✅ Stripe customer created: {customer_id}")
+            except Exception as create_error:
+                logger.error(f"❌ Failed to create Stripe customer: {create_error}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to create Stripe customer: {str(create_error)}"
+                )
+        else:
+            customer_id = db_subscription["stripe_customer_id"]
 
         # Create checkout session
         session = await create_checkout_session(
-            customer_id=db_subscription["stripe_customer_id"],
+            customer_id=customer_id,
             success_url=success_url,
             cancel_url=cancel_url
         )
@@ -1392,11 +1413,41 @@ async def create_payment_link_public(
     Anyone can use this to subscribe - no authentication required
     """
     try:
+        # Validate Stripe configuration
+        if not settings.stripe_api_key or settings.stripe_api_key.strip() == "":
+            logger.error("❌ Stripe API key not configured")
+            raise HTTPException(
+                status_code=503,
+                detail="Payment system is not configured. Please contact support."
+            )
+
+        if not settings.stripe_price_id or settings.stripe_price_id.strip() == "":
+            logger.error("❌ Stripe price ID not configured")
+            raise HTTPException(
+                status_code=503,
+                detail="Subscription pricing not configured. Please contact support."
+            )
+
         # Use default URLs if not provided
         if not success_url:
-            success_url = f"{settings.cors_origins[0]}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
+            # Fallback: try to get from cors_origins or use relative path
+            base_url = settings.cors_origins[0] if settings.cors_origins else ""
+            if not base_url:
+                # Use relative paths as fallback
+                success_url = "/subscription/success?session_id={CHECKOUT_SESSION_ID}"
+                logger.warning("⚠️ Using relative success_url (cors_origins not configured)")
+            else:
+                success_url = f"{base_url}/subscription/success?session_id={{CHECKOUT_SESSION_ID}}"
+
         if not cancel_url:
-            cancel_url = f"{settings.cors_origins[0]}/"
+            base_url = settings.cors_origins[0] if settings.cors_origins else ""
+            if not base_url:
+                cancel_url = "/"
+                logger.warning("⚠️ Using relative cancel_url (cors_origins not configured)")
+            else:
+                cancel_url = f"{base_url}/"
+
+        logger.info(f"🔄 Creating payment link with success_url={success_url}, cancel_url={cancel_url}")
 
         # Create public payment link
         payment_link = await create_public_payment_link(
@@ -1412,9 +1463,16 @@ async def create_payment_link_public(
             "expires_at": payment_link["expires_at"]
         }
 
+    except HTTPException:
+        raise
+    except ValueError as e:
+        logger.error(f"❌ Validation error creating payment link: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.error(f"❌ Failed to create public payment link: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        logger.error(f"  Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to create payment link: {str(e)}")
 
 
 @app.get("/api/v1/subscription/check")
@@ -1425,7 +1483,7 @@ async def check_subscription_status(
     try:
         logger.info(f"🔍 Checking subscription for user: {current_user.id}")
 
-        has_active = await check_active_subscription(current_user.id)
+        has_active = check_active_subscription(current_user.id)
         logger.info(f"  has_active_subscription: {has_active}")
 
         subscription_info = get_user_subscription_info(current_user.id)
@@ -1532,18 +1590,28 @@ async def create_portal_session(
 ):
     """Create a Stripe Customer Portal session for subscription management"""
     try:
+        # Validate Stripe configuration first
+        if not settings.stripe_api_key or settings.stripe_api_key.strip() == "":
+            logger.error("❌ Stripe API key not configured")
+            raise HTTPException(
+                status_code=503,
+                detail="Subscription management is not available. Stripe is not configured."
+            )
+
         # Get user's Stripe customer ID
         client = get_supabase()
         user_response = client.table("profiles").select(
             "stripe_customer_id").eq("id", current_user.id).execute()
 
         if not user_response.data or not user_response.data[0].get("stripe_customer_id"):
+            logger.warning(f"⚠️ No Stripe customer found for user {current_user.id}")
             raise HTTPException(
                 status_code=404,
-                detail="No Stripe customer found. Please subscribe first."
+                detail="No Stripe customer found. Please subscribe first to manage your subscription."
             )
 
         customer_id = user_response.data[0]["stripe_customer_id"]
+        logger.info(f"🔄 Creating Customer Portal session for customer {customer_id}")
 
         # Get return URL from settings or use default
         return_url = f"{settings.cors_origins[0]}/" if settings.cors_origins else "/"
@@ -1555,23 +1623,34 @@ async def create_portal_session(
                 return_url=return_url
             )
 
+            logger.info(f"✅ Customer Portal session created successfully")
             return {
                 "success": True,
                 "portal_url": portal_session["url"]
             }
         except ValueError as stripe_error:
-            # Stripe not configured
-            logger.warning(f"⚠️ Stripe not configured for Customer Portal: {stripe_error}")
-            raise HTTPException(
-                status_code=503,
-                detail="Subscription management is temporarily unavailable. Please contact support or try again later."
-            )
+            # Stripe Customer Portal not configured
+            error_message = str(stripe_error).lower()
+            logger.error(f"❌ Stripe Customer Portal error: {stripe_error}")
+
+            if "customer portal" in error_message or "not enabled" in error_message or "disabled" in error_message:
+                raise HTTPException(
+                    status_code=503,
+                    detail="Customer Portal is not activated in Stripe. Please contact support to enable subscription management."
+                )
+            else:
+                raise HTTPException(
+                    status_code=503,
+                    detail=f"Subscription management error: {str(stripe_error)}"
+                )
 
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"❌ Failed to create portal session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+        logger.error(f"  Traceback: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"Failed to create portal session: {str(e)}")
 
 
 # Stripe webhook endpoint for handling subscription events
