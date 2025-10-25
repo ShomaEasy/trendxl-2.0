@@ -166,7 +166,7 @@ export function SubscriptionBanner({ refreshTrigger }: SubscriptionBannerProps =
             <VStack align="start" gap={1}>
               <HStack gap={2}>
                 <Text fontWeight="bold" color={isTrialAvailable ? "purple.700" : "blue.700"}>
-                  {isTrialAvailable ? "🎁 Free Trial Available!" : "Subscription Required"}
+                  {isTrialAvailable ? "🎁 111 Free Trial Available!" : "Subscription Required"}
                 </Text>
                 {freeTrialInfo && (
                   <Badge colorScheme={canUseTrial ? "purple" : "orange"} variant="solid">
