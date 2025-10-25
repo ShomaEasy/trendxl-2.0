@@ -746,6 +746,9 @@ async def analyze_creative_center_complete(
             "analysis_method": "Creative Center + Ensemble Data integration"
         }
 
+        # Step 6: Record free trial usage
+        await record_free_trial_usage(current_user.id, username)
+
         logger.info(
             f"✅ Complete Creative Center analysis finished: {len(ensemble_analysis.get('trends', []))} trending videos")
 
