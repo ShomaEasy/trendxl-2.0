@@ -665,7 +665,8 @@ async def creative_center_hashtags(
 
 @app.post("/api/v1/analyze-creative-center", response_model=CreativeCenterAnalysisResponse)
 async def analyze_creative_center_complete(
-    request: CreativeCenterAnalysisRequest
+    request: CreativeCenterAnalysisRequest,
+    current_user: Optional[UserProfile] = Depends(get_current_user)
     # rate_limit: None = Depends(check_rate_limit)
 ):
     """
