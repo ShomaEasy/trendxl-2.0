@@ -94,7 +94,7 @@ const ProfileInput: React.FC<ProfileInputProps> = ({
               {/* Subtitle with enhanced styling - адаптивные размеры */}
               <div className="max-w-3xl mx-auto">
                 <Text fontSize={{ base: "xl", sm: "2xl" }} className="font-inter text-black font-semibold mb-2 sm:mb-3">
-                  Discover What's Trending
+                  Discover What's Trending 111
                 </Text>
                 <Text fontSize={{ base: "sm", sm: "md", md: "lg" }} className="font-inter leading-relaxed text-gray-700">
                   Analyze TikTok profiles and uncover the hottest trends with AI-powered insights. 
