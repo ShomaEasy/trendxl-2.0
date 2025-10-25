@@ -678,11 +678,81 @@ async def analyze_creative_center_complete(
     4. Returns comprehensive results with metadata
     """
     try:
-        from utils import extract_tiktok_username
+        # Admins bypass all checks
+        # Track if this is a free trial usage (before analysis)
+        is_free_trial_usage = False
 
+        if current_user.is_admin:
+            logger.info(
+                f"🔑 Admin user {current_user.username} bypassing all checks")
+        else:
+            # Check if user can analyze (subscription or free trial)
+            can_analyze, reason, details = await check_user_can_analyze(current_user.id)
+
+            if not can_analyze:
+                trial_info = details.get("trial_info", {})
+                today_count = trial_info.get(
+                    "today_count", 0) if trial_info else 0
+
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "error": "Analysis limit reached",
+                        "message": details.get("message", "You've used your free daily analysis. Subscribe to get unlimited access!"),
+                        "today_count": today_count,
+                        "action": "subscribe",
+                        "type": "free_trial_exhausted"
+                    }
+                )
+
+            # Log what type of access user is using
+            if reason == "free_trial":
+                is_free_trial_usage = True
+                logger.info(
+                    f"🎁 User {current_user.username} using FREE TRIAL (1/day)")
+            elif reason == "active_subscription":
+                logger.info(
+                    f"💳 User {current_user.username} using SUBSCRIPTION")
+
+        print(f"\n{'='*80}")
+        print(f"🚀 BACKEND: NEW ANALYSIS REQUEST RECEIVED!")
+        print(f"🎯 Profile URL: {request.profile_url}")
+        print(f"👤 User: {current_user.username} (ID: {current_user.id})")
+        print(f"{'='*80}\n")
+        logger.info(f"🎯 Trend analysis requested for: {request.profile_url}")
+
+        # Extract username for caching and tracking
+        from utils import extract_tiktok_username
         username = extract_tiktok_username(request.profile_url)
         logger.info(
             f"🚀 Starting complete Creative Center analysis for @{username}")
+
+        # CRITICAL: Record free trial usage IMMEDIATELY for free users
+        # Free trial is consumed on EVERY request (cached or not)
+        # Only paid subscribers get benefit of cached results
+        if is_free_trial_usage:
+            try:
+                success = await record_free_trial_usage(current_user.id, username)
+                if not success:
+                    # Should not happen with new exception handling, but check anyway
+                    logger.error(
+                        f"❌ record_free_trial_usage returned False for {current_user.username}")
+                    raise HTTPException(
+                        status_code=500,
+                        detail="Failed to record free trial usage. Please try again."
+                    )
+                logger.info(
+                    f"🎁 Free trial used by {current_user.username} for @{username}")
+            except HTTPException:
+                raise  # Re-raise HTTP exceptions as-is
+            except Exception as e:
+                logger.error(f"❌ Failed to record free trial usage: {e}")
+                logger.error(f"❌ Error type: {type(e).__name__}")
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to record free trial usage: {str(e)}"
+                )
+
 
         # Check API keys
         if not getattr(settings, 'perplexity_api_key', None) or settings.perplexity_api_key.strip() in [
